@@ -435,7 +435,6 @@
   </div>
 
   <script>
-    // 버셀 배포 주소 (api/notionapi 경로 포함)
     const VERCEL_API_URL = '/api/notionapi';
 
     let DEFAULT_COLOR = '#38bdf8';
@@ -614,7 +613,7 @@
               return;
             }
 
-            const existingSched = schedules.find(s => blockIndex >= s.startIdx && blockIndex <= s.endIdx);
+            const existingSched = schedules.find(s => blockIndex >= Number(s.startIdx) && blockIndex <= Number(s.endIdx));
             if (existingSched) {
               openEditModal(existingSched.id);
               return;
@@ -676,7 +675,7 @@
       });
 
       schedules.forEach(sched => {
-        for (let i = sched.startIdx; i <= sched.endIdx; i++) {
+        for (let i = Number(sched.startIdx); i <= Number(sched.endIdx); i++) {
           const block = document.querySelector(`.block[data-index="${i}"]`);
           if (block) {
             block.style.backgroundColor = sched.color;
@@ -741,7 +740,7 @@
     }
 
     function openEditModal(scheduleId) {
-      const sched = schedules.find(s => s.id === scheduleId);
+      const sched = schedules.find(s => String(s.id) === String(scheduleId));
       if (!sched) return;
 
       currentEditId = scheduleId;
@@ -757,6 +756,7 @@
     }
 
     function closeModal() {
+      currentEditId = null;
       modalOverlay.style.display = 'none';
       renderSchedules();
     }
@@ -773,8 +773,8 @@
         return;
       }
 
-      if (currentEditId) {
-        const sched = schedules.find(s => s.id === currentEditId);
+      if (currentEditId !== null) {
+        const sched = schedules.find(s => String(s.id) === String(currentEditId));
         if (sched) {
           sched.name = name;
           sched.startIdx = startIdx;
@@ -799,8 +799,8 @@
     }
 
     function deleteCurrentSchedule() {
-      if (currentEditId && confirm('이 일정을 삭제하시겠습니까?')) {
-        schedules = schedules.filter(s => s.id !== currentEditId);
+      if (currentEditId !== null && confirm('이 일정을 삭제하시겠습니까?')) {
+        schedules = schedules.filter(s => String(s.id) !== String(currentEditId));
         saveCurrentSchedules();
         renderSchedules();
         closeModal();

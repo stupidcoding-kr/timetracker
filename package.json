@@ -1,0 +1,7 @@
+{
+  "name": "notion-widget-backend",
+  "version": "1.0.0",
+  "dependencies": {
+    "@notionhq/client": "^2.2.15"
+  }
+}

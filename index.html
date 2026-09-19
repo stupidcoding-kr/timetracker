@@ -36,14 +36,20 @@
 
     .header {
       display: flex;
-      justify-content: space-between;
       align-items: center;
+      justify-content: space-between;
       margin-bottom: 12px;
       position: relative;
       padding: 0 4px;
-      gap: 8px;
     }
     
+    /* 좌측 상단 제목과 달력 아이콘 배치 */
+    .title-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
     .title {
       font-size: 15px;
       font-weight: 700;
@@ -52,36 +58,37 @@
       white-space: nowrap;
     }
 
-    .header-actions {
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      flex-shrink: 0;
-    }
-
+    /* 노션 가림 방지를 위해 좌측 상단으로 이동한 달력 버튼 */
     .cal-icon-btn {
       border: none;
       background: #e0f2fe;
-      width: 24px;
-      height: 24px;
+      width: 22px;
+      height: 22px;
       border-radius: 6px;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
       transition: background 0.15s;
-      position: relative;
-      z-index: 20;
-      margin-right: 2px;
     }
     .cal-icon-btn:hover { background: #bae6fd; }
     .cal-icon-btn svg {
-      width: 13px;
-      height: 13px;
+      width: 12px;
+      height: 12px;
       stroke: #0284c7;
       stroke-width: 2.2;
       fill: none;
     }
+
+    /* 달력 창 열릴 때 외부 클릭 차단 오버레이 */
+    .cal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: transparent;
+      z-index: 40;
+    }
+    .cal-overlay.show { display: block; }
 
     .calendar-popup {
       display: none;
@@ -346,10 +353,13 @@
 </head>
 <body>
 
+  <!-- 달력 닫기 전용 외부 클릭 오버레이 -->
+  <div class="cal-overlay" id="calOverlay" onclick="closeCalendarPopup()"></div>
+
   <div class="widget-card">
     <div class="header">
-      <div class="title">Time Tracker</div>
-      <div class="header-actions">
+      <div class="title-group">
+        <div class="title">Time Tracker</div>
         <button type="button" class="cal-icon-btn" onclick="toggleCalendarPopup(event)" title="달력 보기">
           <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="4" width="18" height="18" rx="4" ry="4"></rect>
@@ -435,13 +445,13 @@
     let schedules = [];
     let currentEditId = null;
 
-    // 드래그 선택 상태 관리
     let isDragging = false;
     let dragStartIndex = -1;
     let dragEndIndex = -1;
 
     const timelineEl = document.getElementById('timeline');
     const calendarPopup = document.getElementById('calendarPopup');
+    const calOverlay = document.getElementById('calOverlay');
     const modalOverlay = document.getElementById('modalOverlay');
 
     function getFormattedDate(dateObj) {
@@ -496,25 +506,28 @@
       syncToNotion(dateStr, data);
     }
 
+    // 달력 토글 및 전용 오버레이 처리
     function toggleCalendarPopup(e) {
       if (e) e.stopPropagation();
-      calendarPopup.classList.toggle('show');
+      const isShow = calendarPopup.classList.toggle('show');
+      if (isShow) {
+        calOverlay.classList.add('show');
+      } else {
+        calOverlay.classList.remove('show');
+      }
     }
 
-    document.addEventListener('click', (e) => {
-      if (!calendarPopup.contains(e.target) && !e.target.closest('.cal-icon-btn')) {
-        calendarPopup.classList.remove('show');
-      }
-    });
+    function closeCalendarPopup() {
+      calendarPopup.classList.remove('show');
+      calOverlay.classList.remove('show');
+    }
 
-    // 배경 클릭 시에만 모달 닫기
     modalOverlay.addEventListener('click', (e) => {
       if (e.target === modalOverlay) {
         closeModal();
       }
     });
 
-    // 마우스 버튼을 뗄 때 드래그 선택 완료 처리
     document.addEventListener('mouseup', () => {
       if (!isDragging) return;
       isDragging = false;
@@ -523,7 +536,8 @@
       const end = Math.max(dragStartIndex, dragEndIndex);
 
       if (calendarPopup.classList.contains('show')) {
-        calendarPopup.classList.remove('show');
+        closeCalendarPopup();
+        return;
       }
 
       if (modalOverlay.style.display === 'flex') {
@@ -625,7 +639,7 @@
           schedules = loadSchedulesForDate(selectedDateStr);
           renderCalendar();
           renderSchedules();
-          calendarPopup.classList.remove('show');
+          closeCalendarPopup();
           
           await fetchFromNotion(selectedDateStr);
         };
@@ -656,9 +670,9 @@
           block.className = 'block';
           block.dataset.index = blockIndex;
 
-          // 마우스 누름: 드래그 선택 시작
           block.onmousedown = (e) => {
             if (e.button !== 0) return;
+            if (calendarPopup.classList.contains('show')) return;
             if (modalOverlay.style.display === 'flex') return;
 
             isDragging = true;
@@ -667,7 +681,6 @@
             updateSelectionHighlight(dragStartIndex, dragEndIndex);
           };
 
-          // 마우스 이동: 드래그 영역 업데이트
           block.onmouseenter = () => {
             if (isDragging) {
               dragEndIndex = blockIndex;
@@ -858,6 +871,14 @@
       closeModal();
     }
 
+    // 요약 문구 생성
+    function generateSummaryText(daySchedules) {
+      if (!daySchedules || daySchedules.length === 0) return '기록 없음';
+      return daySchedules
+        .map(s => `• ${s.name} (${blockIndexToStartTime(Number(s.startIdx))} ~ ${blockIndexToEndTime(Number(s.endIdx))})`)
+        .join(' ');
+    }
+
     async function fetchFromNotion(targetDateStr) {
       try {
         const res = await fetch(`${VERCEL_API_URL}?date=${targetDateStr}`);
@@ -875,12 +896,14 @@
     }
 
     async function syncToNotion(targetDateStr, daySchedules) {
+      const summaryText = generateSummaryText(daySchedules);
       try {
         await fetch(VERCEL_API_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             date: targetDateStr,
+            summary: summaryText,
             schedules: daySchedules
           })
         });
@@ -889,7 +912,7 @@
       }
     }
 
-    // 초기화 함수 실행
+    // 초기화
     schedules = loadSchedulesForDate(selectedDateStr);
     renderCalendar();
     buildTimeline();

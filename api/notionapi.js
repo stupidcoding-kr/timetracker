@@ -1,101 +1,185 @@
-// api/notionapi.js
-export default async function handler(req, res) {
+const { Client } = require('@notionhq/client');
+
+const notion = new Client({ auth: process.env.NOTION_API_KEY });
+const DATABASE_ID = process.env.NOTION_DATABASE_ID;
+
+// 블록 인덱스를 시간 문자열로 변환 (06:00 ~ 25:00)
+function blockIndexToStartTime(idx) {
+  const h = Math.floor(idx / 6) + 6;
+  const m = (idx % 6) * 10;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function blockIndexToEndTime(idx) {
+  const totalMins = (idx + 1) * 10;
+  const h = Math.floor(totalMins / 60) + 6;
+  const m = totalMins % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+// 노션 페이지 본문에 생성될 블록 구조 생성 함수
+function buildPageChildren(schedules) {
+  const jsonContent = JSON.stringify(schedules || []);
+  const children = [
+    {
+      object: 'block',
+      type: 'heading_3',
+      heading_3: {
+        rich_text: [{ type: 'text', text: { content: '📅 일정 요약' } }]
+      }
+    }
+  ];
+
+  if (schedules && schedules.length > 0) {
+    schedules.forEach(s => {
+      const startT = blockIndexToStartTime(Number(s.startIdx));
+      const endT = blockIndexToEndTime(Number(s.endIdx));
+      children.push({
+        object: 'block',
+        type: 'bulleted_list_item',
+        bulleted_list_item: {
+          rich_text: [
+            { type: 'text', text: { content: `${s.name} ` }, annotations: { bold: true } },
+            { type: 'text', text: { content: `(${startT} ~ ${endT})` } }
+          ]
+        }
+      });
+    });
+  } else {
+    children.push({
+      object: 'block',
+      type: 'paragraph',
+      paragraph: {
+        rich_text: [{ type: 'text', text: { content: '기록된 일정이 없습니다.' } }]
+      }
+    });
+  }
+
+  // 데이터 보관용 코드 블록 추가
+  children.push(
+    {
+      object: 'block',
+      type: 'divider',
+      divider: {}
+    },
+    {
+      object: 'block',
+      type: 'code',
+      code: {
+        caption: [{ type: 'text', text: { content: '위젯 동기화용 데이터 (수정 금지)' } }],
+        rich_text: [{ type: 'text', text: { content: jsonContent } }],
+        language: 'json'
+      }
+    }
+  );
+
+  return children;
+}
+
+module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
 
-  if (req.method === 'OPTIONS') return res.status(200).end();
-
-  const NOTION_API_KEY = process.env.NOTION_API_KEY || "ntn_m470014999421AAz7iM3by5TrY1H2Wo0pqEIqvZeY8rayO";
-  const NOTION_DATABASE_ID = process.env.NOTION_DATABASE_ID || "3de1182698ea800c8d92f3db0c9a29d2";
-
-  const headers = {
-    'Authorization': `Bearer ${NOTION_API_KEY}`,
-    'Notion-Version': '2022-06-28',
-    'Content-Type': 'application/json'
-  };
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
 
   try {
-    // 1. 데이터 불러오기 (GET)
     if (req.method === 'GET') {
       const { date } = req.query;
-      if (!date) return res.status(400).json({ error: "date 파라미터가 필요합니다." });
+      if (!date) return res.status(400).json({ error: 'Date is required' });
 
-      const queryRes = await fetch(`https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ filter: { property: "제목", title: { equals: date } } })
+      const response = await notion.databases.query({
+        database_id: DATABASE_ID,
+        filter: {
+          property: 'Date',
+          date: { equals: date }
+        }
       });
 
-      const queryData = await queryRes.json();
-      if (!queryRes.ok) return res.status(queryRes.status).json({ error: "노션 조회 실패", details: queryData });
-
-      if (queryData.results && queryData.results.length > 0) {
-        const page = queryData.results[0];
-        const jsonContent = page.properties["데이터"]?.rich_text?.[0]?.text?.content || "[]";
-        return res.status(200).json(JSON.parse(jsonContent));
+      if (response.results.length === 0) {
+        return res.status(200).json([]);
       }
+
+      const pageId = response.results[0].id;
+      const blocks = await notion.blocks.children.list({ block_id: pageId });
+      const codeBlock = blocks.results.find(b => b.type === 'code');
+
+      if (codeBlock && codeBlock.code.rich_text.length > 0) {
+        const jsonText = codeBlock.code.rich_text[0].plain_text;
+        return res.status(200).json(JSON.parse(jsonText));
+      }
+
       return res.status(200).json([]);
     }
 
-    // 2. 데이터 저장/수정 (POST)
     if (req.method === 'POST') {
-      const { date, schedules } = req.body;
-      if (!date || !schedules) return res.status(400).json({ error: "데이터가 부족합니다." });
+      const { date, summary, schedules } = req.body;
+      if (!date) return res.status(400).json({ error: 'Date is required' });
 
-      const jsonPayload = JSON.stringify(schedules);
-
-      const summaryText = schedules.map(s => {
-        const h1 = String(Math.floor(s.startIdx / 6) + 6).padStart(2, '0');
-        const m1 = String((s.startIdx % 6) * 10).padStart(2, '0');
-        const h2 = String(Math.floor((s.endIdx + 1) / 6) + 6).padStart(2, '0');
-        const m2 = String(((s.endIdx + 1) % 6) * 10).padStart(2, '0');
-        return `• ${s.name} (${h1}:${m1} ~ ${h2}:${m2})`;
-      }).join('\n') || "기록 없음";
-
-      const queryRes = await fetch(`https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ filter: { property: "제목", title: { equals: date } } })
+      const existingPages = await notion.databases.query({
+        database_id: DATABASE_ID,
+        filter: {
+          property: 'Date',
+          date: { equals: date }
+        }
       });
 
-      const queryData = await queryRes.json();
-      if (!queryRes.ok) return res.status(queryRes.status).json({ error: "노션 기존 데이터 검색 실패", details: queryData });
+      const childrenBlocks = buildPageChildren(schedules);
+      const titleText = summary && summary !== '기록 없음' ? summary : `${date} 일정`;
 
-      const existingPage = queryData.results && queryData.results[0];
-      const propertiesPayload = {
-        "제목": { title: [{ text: { content: date } }] },
-        "날짜": { rich_text: [{ text: { content: date } }] },
-        "요약": { rich_text: [{ text: { content: summaryText } }] },
-        "데이터": { rich_text: [{ text: { content: jsonPayload } }] }
-      };
+      if (existingPages.results.length > 0) {
+        const pageId = existingPages.results[0].id;
 
-      let saveRes;
-      if (existingPage) {
-        saveRes = await fetch(`https://api.notion.com/v1/pages/${existingPage.id}`, {
-          method: 'PATCH',
-          headers,
-          body: JSON.stringify({ properties: propertiesPayload })
+        // 1. 표의 제목 속성(Summary) 및 날짜 속성(Date) 업데이트
+        await notion.pages.update({
+          page_id: pageId,
+          properties: {
+            Summary: {
+              title: [{ text: { content: titleText } }]
+            },
+            Date: {
+              date: { start: date }
+            }
+          }
         });
+
+        // 2. 페이지 내부 기존 본문 블록 비우기
+        const blocks = await notion.blocks.children.list({ block_id: pageId });
+        for (const block of blocks.results) {
+          await notion.blocks.delete({ block_id: block.id });
+        }
+
+        // 3. 페이지 내부에 요약 블록 및 코드 블록 생성
+        await notion.blocks.children.append({
+          block_id: pageId,
+          children: childrenBlocks
+        });
+
+        return res.status(200).json({ success: true, message: 'Updated' });
       } else {
-        saveRes = await fetch(`https://api.notion.com/v1/pages`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            parent: { database_id: NOTION_DATABASE_ID },
-            properties: propertiesPayload
-          })
+        // 새 페이지 생성
+        await notion.pages.create({
+          parent: { database_id: DATABASE_ID },
+          properties: {
+            Summary: {
+              title: [{ text: { content: titleText } }]
+            },
+            Date: {
+              date: { start: date }
+            }
+          },
+          children: childrenBlocks
         });
+
+        return res.status(200).json({ success: true, message: 'Created' });
       }
-
-      const saveData = await saveRes.json();
-      if (!saveRes.ok) return res.status(saveRes.status).json({ error: "노션 저장 실패", details: saveData });
-
-      return res.status(200).json({ status: "success", date });
     }
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
 
-  return res.status(405).json({ error: "Method Not Allowed" });
-}
+    return res.status(405).json({ error: 'Method Not Allowed' });
+  } catch (error) {
+    console.error('Notion API Error:', error);
+    return res.status(500).json({ error: error.message });
+  }
+};

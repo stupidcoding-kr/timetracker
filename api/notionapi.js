@@ -16,8 +16,8 @@ function blockIndexToEndTime(idx) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
-function buildPageChildren(schedules) {
-  const jsonContent = JSON.stringify(schedules || []);
+// 페이지 본문에 들어갈 깔끔한 일정 요약 블록 생성
+function buildPageBody(schedules) {
   const children = [
     {
       object: 'block',
@@ -53,23 +53,6 @@ function buildPageChildren(schedules) {
     });
   }
 
-  children.push(
-    {
-      object: 'block',
-      type: 'divider',
-      divider: {}
-    },
-    {
-      object: 'block',
-      type: 'code',
-      code: {
-        caption: [{ type: 'text', text: { content: '위젯 동기화용 데이터 (수정 금지)' } }],
-        rich_text: [{ type: 'text', text: { content: jsonContent } }],
-        language: 'json'
-      }
-    }
-  );
-
   return children;
 }
 
@@ -78,25 +61,23 @@ module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+  if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // 환경변수 체크
   if (!process.env.NOTION_API_KEY || !DATABASE_ID) {
-    return res.status(500).json({ error: 'Vercel 환경 변수(NOTION_API_KEY 또는 NOTION_DATABASE_ID)가 설정되지 않았습니다.' });
+    return res.status(500).json({ error: 'Vercel 환경변수가 설정되지 않았습니다.' });
   }
 
   try {
     if (req.method === 'GET') {
       const { date } = req.query;
-      if (!date) return res.status(400).json({ error: 'Date query is required' });
+      if (!date) return res.status(400).json({ error: 'Date is required' });
 
+      // Summary(제목 속성)가 날짜와 일치하는 항목 검색
       const response = await notion.databases.query({
         database_id: DATABASE_ID,
         filter: {
-          property: 'Date',
-          date: { equals: date }
+          property: 'Summary',
+          title: { equals: date }
         }
       });
 
@@ -104,17 +85,14 @@ module.exports = async (req, res) => {
         return res.status(200).json([]);
       }
 
-      const pageId = response.results[0].id;
-      const blocks = await notion.blocks.children.list({ block_id: pageId });
-      const codeBlock = blocks.results.find(b => b.type === 'code');
+      const page = response.results[0];
+      const dataProperty = page.properties.Data;
 
-      if (codeBlock && codeBlock.code && codeBlock.code.rich_text && codeBlock.code.rich_text.length > 0) {
+      if (dataProperty && dataProperty.rich_text && dataProperty.rich_text.length > 0) {
         try {
-          const jsonText = codeBlock.code.rich_text[0].plain_text;
-          const parsedData = JSON.parse(jsonText);
-          return res.status(200).json(parsedData);
-        } catch (parseErr) {
-          console.error('JSON 파싱 실패:', parseErr);
+          const jsonText = dataProperty.rich_text[0].plain_text;
+          return res.status(200).json(JSON.parse(jsonText));
+        } catch (e) {
           return res.status(200).json([]);
         }
       }
@@ -123,50 +101,49 @@ module.exports = async (req, res) => {
     }
 
     if (req.method === 'POST') {
-      const { date, summary, schedules } = req.body;
+      const { date, schedules } = req.body;
       if (!date) return res.status(400).json({ error: 'Date is required' });
 
+      // 기존 해당 날짜 페이지 조회
       const existingPages = await notion.databases.query({
         database_id: DATABASE_ID,
         filter: {
-          property: 'Date',
-          date: { equals: date }
+          property: 'Summary',
+          title: { equals: date }
         }
       });
 
-      const childrenBlocks = buildPageChildren(schedules);
-      const titleText = summary && summary !== '기록 없음' ? summary : `${date} 일정`;
+      const jsonContent = JSON.stringify(schedules || []);
+      const pageBodyBlocks = buildPageBody(schedules);
 
       if (existingPages.results && existingPages.results.length > 0) {
         const pageId = existingPages.results[0].id;
 
-        // 1. 속성 업데이트
+        // 1. 표의 속성 업데이트 (Summary에는 날짜, Data에는 JSON 데이터)
         await notion.pages.update({
           page_id: pageId,
           properties: {
             Summary: {
-              title: [{ text: { content: titleText } }]
+              title: [{ text: { content: date } }]
             },
-            Date: {
-              date: { start: date }
+            Data: {
+              rich_text: [{ text: { content: jsonContent } }]
             }
           }
         });
 
-        // 2. 기존 블록 삭제
+        // 2. 페이지 내부 기존 본문 블록 비우기
         const blocks = await notion.blocks.children.list({ block_id: pageId });
         for (const block of blocks.results) {
           try {
             await notion.blocks.delete({ block_id: block.id });
-          } catch (delErr) {
-            console.warn('블록 삭제 건너뜀:', delErr.message);
-          }
+          } catch (delErr) {}
         }
 
-        // 3. 새 블록 추가
+        // 3. 페이지 내부에 일정 요약 추가
         await notion.blocks.children.append({
           block_id: pageId,
-          children: childrenBlocks
+          children: pageBodyBlocks
         });
 
         return res.status(200).json({ success: true, message: 'Updated' });
@@ -176,13 +153,13 @@ module.exports = async (req, res) => {
           parent: { database_id: DATABASE_ID },
           properties: {
             Summary: {
-              title: [{ text: { content: titleText } }]
+              title: [{ text: { content: date } }]
             },
-            Date: {
-              date: { start: date }
+            Data: {
+              rich_text: [{ text: { content: jsonContent } }]
             }
           },
-          children: childrenBlocks
+          children: pageBodyBlocks
         });
 
         return res.status(200).json({ success: true, message: 'Created' });
@@ -191,10 +168,7 @@ module.exports = async (req, res) => {
 
     return res.status(405).json({ error: 'Method Not Allowed' });
   } catch (error) {
-    console.error('Notion API Error Detail:', error);
-    return res.status(500).json({ 
-      error: 'Notion API 처리 중 에러 발생', 
-      message: error.message 
-    });
+    console.error('Notion API Error:', error);
+    return res.status(500).json({ error: error.message });
   }
 };

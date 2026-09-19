@@ -23,8 +23,8 @@
     }
 
     .widget-card {
-      width: 180px;
-      padding: 12px 10px;
+      width: 186px;
+      padding: 16px 12px 14px 12px;
       background-color: #ffffff;
       border: 1px solid #e2e8f0;
       border-radius: 16px;
@@ -38,70 +38,55 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 10px;
+      margin-bottom: 12px;
       position: relative;
-      padding: 0 2px;
+      padding: 0 4px;
+      gap: 8px;
     }
+    
     .title {
-      font-size: 13px;
+      font-size: 15px;
       font-weight: 700;
-      color: #0f172a;
-      letter-spacing: -0.3px;
+      color: #2b2b2b;
+      letter-spacing: 0.3px;
       white-space: nowrap;
     }
+
     .header-actions {
       display: flex;
       align-items: center;
-      gap: 4px;
+      gap: 5px;
+      flex-shrink: 0;
     }
 
     .cal-icon-btn {
       border: none;
       background: #e0f2fe;
-      width: 20px;
-      height: 20px;
-      border-radius: 5px;
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
       transition: background 0.15s;
+      position: relative;
+      z-index: 20;
+      margin-right: 2px;
     }
     .cal-icon-btn:hover { background: #bae6fd; }
     .cal-icon-btn svg {
-      width: 12px;
-      height: 12px;
+      width: 13px;
+      height: 13px;
       stroke: #0284c7;
       stroke-width: 2.2;
       fill: none;
     }
 
-    .add-btn {
-      border: 1px solid #e2e8f0;
-      background: #ffffff;
-      color: #0284c7;
-      width: 20px;
-      height: 20px;
-      border-radius: 5px;
-      font-size: 12px;
-      font-weight: 700;
-      font-family: inherit;
-      cursor: pointer;
-      transition: all 0.2s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      line-height: 1;
-    }
-    .add-btn:hover {
-      background: #f0f9ff;
-      border-color: #bae6fd;
-    }
-
     .calendar-popup {
       display: none;
       position: absolute;
-      top: 32px;
+      top: 36px;
       left: -2px;
       right: -2px;
       background: #ffffff;
@@ -209,7 +194,7 @@
     .timeline {
       display: flex;
       flex-direction: column;
-      gap: 7px;
+      gap: 8px;
     }
 
     .time-row {
@@ -243,9 +228,11 @@
       aspect-ratio: 1 / 1;
       background-color: #f1f5f9;
       cursor: pointer;
-      transition: background-color 0.15s, opacity 0.15s;
+      transition: background-color 0.05s;
     }
-    .block:hover { opacity: 0.8; }
+    .block:hover {
+      background-color: #cbd5e1 !important;
+    }
 
     .modal-overlay {
       position: fixed;
@@ -371,7 +358,6 @@
             <line x1="3" y1="10" x2="21" y2="10"></line>
           </svg>
         </button>
-        <button type="button" class="add-btn" onclick="openAddModal()" title="일정 추가">+</button>
       </div>
 
       <div class="calendar-popup" id="calendarPopup">
@@ -446,9 +432,10 @@
     let viewYear = todayObj.getFullYear();
     let viewMonth = todayObj.getMonth(); 
     
-    let schedules = loadSchedulesForDate(selectedDateStr);
+    let schedules = [];
     let currentEditId = null;
 
+    // 드래그 선택 상태 관리
     let isDragging = false;
     let dragStartIndex = -1;
     let dragEndIndex = -1;
@@ -464,9 +451,44 @@
       return `${y}-${m}-${d}`;
     }
 
+    function getRepeats() {
+      const saved = localStorage.getItem('tracker_repeats');
+      return saved ? JSON.parse(saved) : [];
+    }
+
+    function saveRepeats(repeats) {
+      localStorage.setItem('tracker_repeats', JSON.stringify(repeats));
+    }
+
     function loadSchedulesForDate(dateStr) {
       const savedData = localStorage.getItem(`tracker_${dateStr}`);
-      return savedData ? JSON.parse(savedData) : [];
+      let localSchedules = savedData ? JSON.parse(savedData) : [];
+      
+      const repeats = getRepeats();
+      const targetDate = new Date(dateStr);
+      const targetDay = targetDate.getDay();
+      
+      repeats.forEach(rep => {
+        if (dateStr >= rep.originDate) {
+          let isMatch = false;
+          if (rep.repeat === 'daily') isMatch = true;
+          else if (rep.repeat === 'weekday' && targetDay >= 1 && targetDay <= 5) isMatch = true;
+          else if (rep.repeat === 'weekend' && (targetDay === 0 || targetDay === 6)) isMatch = true;
+          else if (rep.repeat === 'weekly') {
+            const originDay = new Date(rep.originDate).getDay();
+            if (originDay === targetDay) isMatch = true;
+          }
+
+          if (isMatch) {
+            const exists = localSchedules.some(s => String(s.id) === String(rep.id));
+            if (!exists) {
+              localSchedules.push({ ...rep });
+            }
+          }
+        }
+      });
+
+      return localSchedules;
     }
 
     function saveSchedulesForDate(dateStr, data) {
@@ -485,8 +507,41 @@
       }
     });
 
-    modalOverlay.addEventListener('click', () => {
-      closeModal();
+    // 배경 클릭 시에만 모달 닫기
+    modalOverlay.addEventListener('click', (e) => {
+      if (e.target === modalOverlay) {
+        closeModal();
+      }
+    });
+
+    // 마우스 버튼을 뗄 때 드래그 선택 완료 처리
+    document.addEventListener('mouseup', () => {
+      if (!isDragging) return;
+      isDragging = false;
+
+      const start = Math.min(dragStartIndex, dragEndIndex);
+      const end = Math.max(dragStartIndex, dragEndIndex);
+
+      if (calendarPopup.classList.contains('show')) {
+        calendarPopup.classList.remove('show');
+      }
+
+      if (modalOverlay.style.display === 'flex') {
+        return;
+      }
+
+      if (start !== -1 && end !== -1) {
+        if (start === end) {
+          const existingSched = schedules.find(s => start >= Number(s.startIdx) && start <= Number(s.endIdx));
+          if (existingSched) {
+            openEditModal(existingSched.id);
+          } else {
+            openAddModalWithRange(start, end);
+          }
+        } else {
+          openAddModalWithRange(start, end);
+        }
+      }
     });
 
     function isKoreanHoliday(year, month, day, dayOfWeek) {
@@ -601,34 +656,22 @@
           block.className = 'block';
           block.dataset.index = blockIndex;
 
+          // 마우스 누름: 드래그 선택 시작
           block.onmousedown = (e) => {
-            e.preventDefault();
-
-            const isCalOpen = calendarPopup.classList.contains('show');
-            const isModalOpen = modalOverlay.style.display === 'flex';
-
-            if (isCalOpen || isModalOpen) {
-              if (isCalOpen) calendarPopup.classList.remove('show');
-              if (isModalOpen) closeModal();
-              return;
-            }
-
-            const existingSched = schedules.find(s => blockIndex >= Number(s.startIdx) && blockIndex <= Number(s.endIdx));
-            if (existingSched) {
-              openEditModal(existingSched.id);
-              return;
-            }
+            if (e.button !== 0) return;
+            if (modalOverlay.style.display === 'flex') return;
 
             isDragging = true;
             dragStartIndex = blockIndex;
             dragEndIndex = blockIndex;
-            updateDragSelection();
+            updateSelectionHighlight(dragStartIndex, dragEndIndex);
           };
 
+          // 마우스 이동: 드래그 영역 업데이트
           block.onmouseenter = () => {
             if (isDragging) {
               dragEndIndex = blockIndex;
-              updateDragSelection();
+              updateSelectionHighlight(dragStartIndex, dragEndIndex);
             }
           };
 
@@ -640,45 +683,50 @@
       }
     }
 
-    document.addEventListener('mouseup', () => {
-      if (isDragging) {
-        isDragging = false;
-        const start = Math.min(dragStartIndex, dragEndIndex);
-        const end = Math.max(dragStartIndex, dragEndIndex);
-        openAddModalWithRange(start, end);
-      }
-    });
-
-    function updateDragSelection() {
+    function updateSelectionHighlight(startIdx, endIdx) {
       renderSchedules();
-      const start = Math.min(dragStartIndex, dragEndIndex);
-      const end = Math.max(dragStartIndex, dragEndIndex);
+      if (startIdx === -1 || endIdx === -1) return;
+
+      const start = Math.min(startIdx, endIdx);
+      const end = Math.max(startIdx, endIdx);
 
       for (let i = start; i <= end; i++) {
-        const block = document.querySelector(`.block[data-index="${i}"]`);
-        if (block) {
-          block.style.backgroundColor = DEFAULT_COLOR;
+        const b = document.querySelector(`.block[data-index="${i}"]`);
+        if (b) {
+          b.style.backgroundColor = DEFAULT_COLOR;
         }
       }
     }
 
-    function blockIndexToTime(idx) {
+    function blockIndexToStartTime(idx) {
       const h = Math.floor(idx / 6) + 6;
       const m = (idx % 6) * 10;
+      return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+    }
+
+    function blockIndexToEndTime(idx) {
+      const totalMins = (idx + 1) * 10;
+      const h = Math.floor(totalMins / 60) + 6;
+      const m = totalMins % 60;
       return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
     }
 
     function renderSchedules() {
       document.querySelectorAll('.block').forEach(b => {
         b.style.backgroundColor = '#f1f5f9';
-        b.innerHTML = '';
+        b.removeAttribute('title');
       });
 
       schedules.forEach(sched => {
+        const startT = blockIndexToStartTime(Number(sched.startIdx));
+        const endT = blockIndexToEndTime(Number(sched.endIdx));
+        const tooltip = `${sched.name} (${startT} ~ ${endT})`;
+
         for (let i = Number(sched.startIdx); i <= Number(sched.endIdx); i++) {
           const block = document.querySelector(`.block[data-index="${i}"]`);
           if (block) {
             block.style.backgroundColor = sched.color;
+            block.setAttribute('title', tooltip);
           }
         }
       });
@@ -694,10 +742,10 @@
       startSel.innerHTML = '';
       endSel.innerHTML = '';
 
-      for (let i = 0; i < 114; i++) {
-        const timeStr = blockIndexToTime(i);
-        startSel.innerHTML += `<option value="${i}">${timeStr}</option>`;
-        endSel.innerHTML += `<option value="${i}">${timeStr}</option>`;
+      const totalBlocks = (25 - 6) * 6;
+      for (let i = 0; i < totalBlocks; i++) {
+        startSel.innerHTML += `<option value="${i}">${blockIndexToStartTime(i)}</option>`;
+        endSel.innerHTML += `<option value="${i}">${blockIndexToEndTime(i)}</option>`;
       }
     }
 
@@ -711,19 +759,6 @@
       if (/^#[0-9A-F]{6}$/i.test(code)) {
         document.getElementById('modalColorPicker').value = code;
       }
-    }
-
-    function openAddModal() {
-      currentEditId = null;
-      document.getElementById('modalTitle').innerText = '일정 추가';
-      document.getElementById('taskNameInput').value = '';
-      document.getElementById('startTimeSelect').value = '0';
-      document.getElementById('endTimeSelect').value = '5';
-      document.getElementById('modalColorPicker').value = DEFAULT_COLOR;
-      document.getElementById('modalColorCode').value = DEFAULT_COLOR.toUpperCase();
-      document.getElementById('repeatSelect').value = 'none';
-      document.getElementById('btnDelete').style.display = 'none';
-      modalOverlay.style.display = 'flex';
     }
 
     function openAddModalWithRange(startIdx, endIdx) {
@@ -773,25 +808,35 @@
         return;
       }
 
+      let schedObj;
       if (currentEditId !== null && currentEditId !== undefined) {
-        const sched = schedules.find(s => String(s.id) === String(currentEditId));
-        if (sched) {
-          sched.name = name;
-          sched.startIdx = startIdx;
-          sched.endIdx = endIdx;
-          sched.color = color;
-          sched.repeat = repeat;
+        schedObj = schedules.find(s => String(s.id) === String(currentEditId));
+        if (schedObj) {
+          schedObj.name = name;
+          schedObj.startIdx = startIdx;
+          schedObj.endIdx = endIdx;
+          schedObj.color = color;
+          schedObj.repeat = repeat;
         }
       } else {
-        schedules.push({
+        schedObj = {
           id: Date.now(),
           name: name,
           startIdx: startIdx,
           endIdx: endIdx,
           color: color,
-          repeat: repeat
-        });
+          repeat: repeat,
+          originDate: selectedDateStr
+        };
+        schedules.push(schedObj);
       }
+
+      let repeats = getRepeats();
+      repeats = repeats.filter(r => String(r.id) !== String(schedObj.id));
+      if (repeat !== 'none') {
+        repeats.push({ ...schedObj, originDate: schedObj.originDate || selectedDateStr });
+      }
+      saveRepeats(repeats);
 
       saveCurrentSchedules();
       renderSchedules();
@@ -801,7 +846,13 @@
     function deleteCurrentSchedule() {
       if (currentEditId === null || currentEditId === undefined) return;
       
-      schedules = schedules.filter(s => String(s.id) !== String(currentEditId));
+      const targetId = String(currentEditId);
+      schedules = schedules.filter(s => String(s.id) !== targetId);
+
+      let repeats = getRepeats();
+      repeats = repeats.filter(r => String(r.id) !== targetId);
+      saveRepeats(repeats);
+
       saveCurrentSchedules();
       renderSchedules();
       closeModal();
@@ -838,6 +889,8 @@
       }
     }
 
+    // 초기화 함수 실행
+    schedules = loadSchedulesForDate(selectedDateStr);
     renderCalendar();
     buildTimeline();
     initTimeSelects();

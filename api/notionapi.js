@@ -16,7 +16,7 @@ function blockIndexToEndTime(idx) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
-// 페이지 본문에 들어갈 깔끔한 일정 요약 블록 생성
+// 페이지 본문에 들어갈 일정 요약 목록 블록 생성
 function buildPageBody(schedules) {
   const children = [
     {
@@ -72,7 +72,7 @@ module.exports = async (req, res) => {
       const { date } = req.query;
       if (!date) return res.status(400).json({ error: 'Date is required' });
 
-      // Summary(제목 속성)가 날짜와 일치하는 항목 검색
+      // Summary(제목) 필드로 해당 날짜 데이터 검색
       const response = await notion.databases.query({
         database_id: DATABASE_ID,
         filter: {
@@ -104,7 +104,6 @@ module.exports = async (req, res) => {
       const { date, schedules } = req.body;
       if (!date) return res.status(400).json({ error: 'Date is required' });
 
-      // 기존 해당 날짜 페이지 조회
       const existingPages = await notion.databases.query({
         database_id: DATABASE_ID,
         filter: {
@@ -116,23 +115,29 @@ module.exports = async (req, res) => {
       const jsonContent = JSON.stringify(schedules || []);
       const pageBodyBlocks = buildPageBody(schedules);
 
+      // 저장할 속성 정보 (Summary, Date, Data)
+      const targetProperties = {
+        Summary: {
+          title: [{ text: { content: date } }]
+        },
+        Date: {
+          date: { start: date }
+        },
+        Data: {
+          rich_text: [{ text: { content: jsonContent } }]
+        }
+      };
+
       if (existingPages.results && existingPages.results.length > 0) {
         const pageId = existingPages.results[0].id;
 
-        // 1. 표의 속성 업데이트 (Summary에는 날짜, Data에는 JSON 데이터)
+        // 1. 노션 표 속성 업데이트
         await notion.pages.update({
           page_id: pageId,
-          properties: {
-            Summary: {
-              title: [{ text: { content: date } }]
-            },
-            Data: {
-              rich_text: [{ text: { content: jsonContent } }]
-            }
-          }
+          properties: targetProperties
         });
 
-        // 2. 페이지 내부 기존 본문 블록 비우기
+        // 2. 기존 본문 내용 삭제
         const blocks = await notion.blocks.children.list({ block_id: pageId });
         for (const block of blocks.results) {
           try {
@@ -140,7 +145,7 @@ module.exports = async (req, res) => {
           } catch (delErr) {}
         }
 
-        // 3. 페이지 내부에 일정 요약 추가
+        // 3. 본문에 새 일정 요약 추가
         await notion.blocks.children.append({
           block_id: pageId,
           children: pageBodyBlocks
@@ -151,14 +156,7 @@ module.exports = async (req, res) => {
         // 새 페이지 생성
         await notion.pages.create({
           parent: { database_id: DATABASE_ID },
-          properties: {
-            Summary: {
-              title: [{ text: { content: date } }]
-            },
-            Data: {
-              rich_text: [{ text: { content: jsonContent } }]
-            }
-          },
+          properties: targetProperties,
           children: pageBodyBlocks
         });
 

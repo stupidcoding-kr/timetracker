@@ -33,6 +33,7 @@
       display: flex;
       flex-direction: column;
       position: relative;
+      overflow: hidden;
     }
 
     .header {
@@ -42,9 +43,9 @@
       margin-bottom: 12px;
       position: relative;
       padding: 0 4px;
+      flex-shrink: 0;
     }
     
-    /* 좌측 상단 제목과 달력 아이콘 배치 */
     .title-group {
       display: flex;
       align-items: center;
@@ -59,7 +60,6 @@
       white-space: nowrap;
     }
 
-    /* 노션 가림 방지를 위해 좌측 상단으로 이동한 달력 버튼 */
     .cal-icon-btn {
       border: none;
       background: #e0f2fe;
@@ -81,7 +81,6 @@
       fill: none;
     }
 
-    /* 달력 창 열릴 때 외부 클릭 차단 오버레이 */
     .cal-overlay {
       display: none;
       position: fixed;
@@ -203,6 +202,17 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
+      flex: 1;
+      overflow-y: auto;
+      padding-right: 2px;
+    }
+
+    .timeline::-webkit-scrollbar {
+      width: 4px;
+    }
+    .timeline::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
     }
 
     .time-row {
@@ -213,7 +223,7 @@
     }
 
     .hour-label {
-      width: 14px;
+      width: 16px;
       font-size: 11px;
       font-weight: 600;
       color: #94a3b8;
@@ -354,7 +364,6 @@
 </head>
 <body>
 
-  <!-- 달력 닫기 전용 외부 클릭 오버레이 -->
   <div class="cal-overlay" id="calOverlay" onclick="closeCalendarPopup()"></div>
 
   <div class="widget-card">
@@ -507,7 +516,6 @@
       syncToNotion(dateStr, data);
     }
 
-    // 달력 토글 및 전용 오버레이 처리
     function toggleCalendarPopup(e) {
       if (e) e.stopPropagation();
       const isShow = calendarPopup.classList.toggle('show');
@@ -649,11 +657,12 @@
       }
     }
 
+    // 06시부터 25시까지 행 생성
     function buildTimeline() {
       timelineEl.innerHTML = '';
       let globalBlockIndex = 0;
 
-      for (let hour = 6; hour <= 24; hour++) {
+      for (let hour = 6; hour <= 25; hour++) {
         const row = document.createElement('div');
         row.className = 'time-row';
 
@@ -750,13 +759,14 @@
       saveSchedulesForDate(selectedDateStr, schedules);
     }
 
+    // 06:00 ~ 26:00 (25시 50분 종료 범위 포함) 선택 옵션 생성
     function initTimeSelects() {
       const startSel = document.getElementById('startTimeSelect');
       const endSel = document.getElementById('endTimeSelect');
       startSel.innerHTML = '';
       endSel.innerHTML = '';
 
-      const totalBlocks = (25 - 6) * 6;
+      const totalBlocks = (26 - 6) * 6;
       for (let i = 0; i < totalBlocks; i++) {
         startSel.innerHTML += `<option value="${i}">${blockIndexToStartTime(i)}</option>`;
         endSel.innerHTML += `<option value="${i}">${blockIndexToEndTime(i)}</option>`;
@@ -872,7 +882,6 @@
       closeModal();
     }
 
-    // 요약 문구 생성
     function generateSummaryText(daySchedules) {
       if (!daySchedules || daySchedules.length === 0) return '기록 없음';
       return daySchedules
